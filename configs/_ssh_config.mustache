@@ -1,0 +1,15 @@
+{{#ssh}}
+Host 127.0.0.1
+    # NOTE About Host Key Verification
+    #
+    # NOTE if the host key has previously been saved
+    # HostKeyAlias myhost.example.com
+    #
+    # NOTE Trust relay tunnel is secure enough (default)
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    # NOTE: to suppress adding hostkey warning
+    # LogLevel ERROR
+    User {{user}}
+    IdentityFile {{identity_file}}
+{{/ssh}}

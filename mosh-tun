@@ -1,10 +1,13 @@
 #!/bin/bash
 # A wrapper to establish mosh connection to remote machine with proxy chain.
 #
-# TODO support more mosh-server initialization methods: nc server, curl, and ssh
+# TODO support more mosh-server initialization methods: nc server, curl, and
+# - [X] nc daemon
+# - [X] ssh
+#
 # TODO Global relay registry
 
-VERSION=20200424
+VERSION=20200425
 
 ### Sanity check
 # For use within MobaXterm, probably works also in vanilla Cygwin
@@ -75,13 +78,13 @@ generate_gost_conf(){
     local rhost=$1
     local local_relay_port=$2
     local mosh_port=$3
-    local rhost_conf=${rhost_conf:-$TOP/configs/ds-$rhost.yml}
     # gost for windows only recognizes windows-style path
-    local gost_conf_tpl=$(cygpath -w "$TOP/configs/$rhost.json.mustache")
-    local conf_name=$(basename "$rhost_conf" .yml)
-    local gost_conf=$(cygpath -w "$TOP/log/$conf_name.json")
+    local gost_conf_tpl=$(cygpath -m "$TOP/configs/tunnel.json.mustache")
+    local ds_name=$(basename "$RHOST_DS" .yml)
+    local gost_conf=$(cygpath -m "$TOP/log/$ds_name.json")
 
-    cat "$rhost_conf" - <<END | mustache "$gost_conf_tpl" > "$gost_conf"
+    cat "$RHOST_DS" - <<END | $MUSTACHE "$gost_conf_tpl" > "$gost_conf"
+# extra line break to avoid no newline at the end of the ds file
 local_port: $local_relay_port
 mosh_server_port: $mosh_port
 END
@@ -121,28 +124,36 @@ sotp_gost_relay(){
 
 print_help(){
     cat <<END
-usage: mosh-gost -hlv [host]
-  where host is default to cvultr25-proxied if absent
+Usage: $PROGRAM [options] [<host>]
 
-options:
+  host must have a corresponding 'ds-*.yml' file under configs/
+
+options: certain options are only used with specific methods
   -h:           print help message.
-  -l:           list proxied hosts.
+  -l:           list available hosts, i.e. hosts with configuration files.
   -v:           print version info.
-  -t:           seconds (default 10) to wait for mosh-server to start.
-  -c:           specify tunnel settings, default to configs/ds-<host>.yml
+  -m:           method to start mosh-server, default to nc.
+                Supported methods: nc, ssh
+  -t:           [nc] seconds (default 10) to wait for mosh-server to start.
+  -c:           specify tunnel settings, if omitted, default to configs/ds-<method>-<host>.yml
 
 END
 }
 
 print_host_list(){
-    echo 'Supported hosts (configs/*.json.mustache):'
-    for conf in "$TOP/configs/"*.json.mustache; do
-        conf=$(basename "$conf")
-        echo "- ${conf/.json.mustache/}"
+    echo 'Available (method, host) (configs/ds-<method>-<rhost>.yml):'
+    for ds in "$TOP/configs/"ds-*.yml; do
+        ds_desc=$(basename "$ds" .yml | sed 's/^ds-//; s/-/:\t\t/')
+        echo "- $ds_desc"
     done
 }
 
-while getopts ":hlvt:c:" opt; do
+if [[ $# -eq 0 ]]; then
+    print_help
+    exit 0
+fi
+
+while getopts ":hlvt:c:m:" opt; do
     case "$opt" in
         h)
         print_help
@@ -158,12 +169,19 @@ while getopts ":hlvt:c:" opt; do
         exit 0
         ;;
         t)
-        TIMEOUT=$OPTARG
+        NC_TIMEOUT=$OPTARG
         ;;
         c)
-        rhost_conf=$OPTARG
-        if [[ ! -r $rhost_conf ]]; then
-            echo "ERROR: $rhost_conf does NOT exist."
+        RHOST_DS=$OPTARG
+        if [[ ! -r $RHOST_DS ]]; then
+            echo "ERROR: $RHOST_DS does NOT exist."
+            exit 1
+        fi
+        ;;
+        m)
+        METHOD=$OPTARG
+        if [[ ! $METHOD =~ ssh|nc ]]; then
+            echo "ERROR: method $METHOD not supported."
             exit 1
         fi
         ;;
@@ -173,32 +191,65 @@ while getopts ":hlvt:c:" opt; do
         ;;
         esac
 done 
-shift $((OPTIND -1))
+shift $((OPTIND - 1))
 
-RHOST=${1:-nj.vps.cx}
-if [[ ! -e $TOP/configs/$RHOST.json.mustache ]]; then
-    echo "ERROR: $RHOST is not supported. Abort."
+METHOD=${METHOD:-nc}
+RHOST=$1
+# Host data source
+RHOST_DS=${RHOST_DS:-$TOP/configs/ds-$METHOD-$RHOST.yml}
+if [[ ! -e $RHOST_DS ]]; then
+    echo "ERROR: Host $RHOST is not available. Abort."
     print_host_list
     exit 1
 fi
 
-log "[main] moshing into $RHOST ..."
-
+### relay
 RELAY_PORT_L=$(getport)
-log "[gost] setting up mosh relay [:$RELAY_PORT_L -> $RHOST:]..."
+log "[gost] setting up relay tunnel [:$RELAY_PORT_L -> $RHOST:]..."
 # 60000 is the default mosh-server port
 MOSH_PORT=60000
 GOST_RELAY_PID=$(restart_gost_relay "$RHOST" "$RELAY_PORT_L" "$MOSH_PORT")
-log "[gost] started mosh relay [:$RELAY_PORT_L/$RHOSTNAME:$MOSH_PORT] PID: $GOST_RELAY_PID"
+if [[ -z $GOST_RELAY_PID ]]; then
+    echo "ERROR: fail to establish relay connections."
+    exit 1
+fi
+log "[gost] established relay tunnel [:$RELAY_PORT_L -> $RHOST:] PID: $GOST_RELAY_PID"
 
-# nc on Ubuntu 1804 might need '-q' to quit
-# TODO We need a real server at $rhost
+### mosh-server
+
+_server_nc_daemon(){
+    # nc will quit almost immediately after the stdin is closed.
+    # TODO Remedies include a fifo file or just use curl with a http server
+    local timeout=${NC_TIMEOUT:-10}
+    (echo 'mosh-server'; sleep "$timeout") | nc 127.0.0.1 "$RELAY_PORT_L"
+}
+
+_server_sshd(){
+    local ssh_config_tpl=$(cygpath -m "$TOP/configs/_ssh_config.mustache")
+    local ssh_config=$TOP/log/_ssh_config-$RHOST
+    cat "$RHOST_DS" | "$MUSTACHE" "$ssh_config_tpl" > "$ssh_config"
+    ssh -F "$ssh_config" 127.0.0.1 -p "$RELAY_PORT_L" mosh-server
+}
+
+create_mosh_session(){
+    local method=$1
+    case "$method" in
+        nc)
+            _server_nc_daemon
+        ;;
+        ssh)
+            _server_sshd
+        ;;
+        *)
+            echo "ERROR: method not supported: $method"
+            stop_gost_relay
+            exit 1
+        ;;
+    esac
+}
 $__BEGIN_DEBUG__
-# nc will quit almos immediately after the stdin is closed.
-# TODO Remedies include a fifo file or just use curl with a http server
-TIMEOUT=${TIMEOUT:-10}
-MOSH_CONNECT=$( (echo 'mosh-server'; sleep "$TIMEOUT") | nc 127.0.0.1 $RELAY_PORT_L \
-                | awk -e '/MOSH CONNECT/{ print $3 " " $4 }')
+log "[main] starting mosh-server at $RHOST ..."
+MOSH_CONNECT=$( create_mosh_session $METHOD | awk -e '/MOSH CONNECT/{ print $3 " " $4 }')
 if [[ -z "$MOSH_CONNECT" ]]; then
     log "[main] Failed to start mosh-server. Abort"
     sotp_gost_relay
@@ -211,10 +262,11 @@ if [[ $MOSH_PORT != 60000 ]]; then
     GOST_RELAY_PID=$(restart_gost_relay "$RHOST" "$RELAY_PORT_L" "$MOSH_PORT")
 fi
 
-### mosh-client
 
+### mosh-client
 log "[mosh] starting mosh-client ... "
 MOSH_KEY="$MOSH_KEY" mosh-client 127.0.0.1 "$RELAY_PORT_L"
+
 
 ### Clean up
 trap_ctrlc (){

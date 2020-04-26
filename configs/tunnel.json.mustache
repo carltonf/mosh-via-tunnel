@@ -1,0 +1,15 @@
+{
+    "Debug": false,
+    "Retries": 0,
+    "ServeNodes": [
+        {{! mosh daemon refers to the service that can start mosh-server, nc_mosh_daemon , sshd and etc.}}
+        "tcp://127.0.0.1:{{ local_port }}/127.0.0.1:{{ mosh_daemon_port }}",
+        {{! connecting to mosh-server at public interface to rettain tunnel flexibility }}
+        "udp://127.0.0.1:{{ local_port }}/{{ rhost }}:{{ mosh_server_port }}"
+    ],
+    "ChainNodes": [
+        {{#proxies}}
+        "{{link}}"{{^last}},{{/last}}
+        {{/proxies}}
+    ]
+}

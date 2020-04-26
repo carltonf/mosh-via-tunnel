@@ -1,0 +1,14 @@
+---
+rhost: myhost.example.com
+mosh_daemon_port: 59999
+proxies:
+- link: "socks5://127.0.0.1:1080"
+- link: "ss://encryption:password@myhost.example.com:1080"
+- link: "relay://127.0.0.1:1081"
+  last: true
+
+## Dynamic assignments. 
+# DO NOT mark the end of YAML file and have a new line at the end.
+#
+# local_port: $local_relay_port
+# mosh_server_port: $mosh_port

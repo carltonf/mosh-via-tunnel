@@ -1,4 +1,5 @@
 log/*
 !log/README
 configs/ds-*.yml
-!configs/ds-myhost.example.com.yml
+!configs/ds-*-myhost.example.com.yml
+!configs/ds-*-myhost.example.com.yml
