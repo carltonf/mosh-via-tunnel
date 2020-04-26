@@ -1,0 +1,14 @@
+{
+    "Debug": true,
+    "Retries": 0,
+    "ServeNodes": [
+        {{! remote mosh server daemon only listens to localhost }}
+        "tcp://127.0.0.1:{{ local_port }}/127.0.0.1:{{ nc_mosh_port }}",
+        "udp://127.0.0.1:{{ local_port }}/{{ rhost }}:{{ mosh_server_port }}"
+    ],
+    "ChainNodes": [
+        {{#proxies}}
+        "{{link}}"{{^last}},{{/last}}
+        {{/proxies}}
+    ]
+}

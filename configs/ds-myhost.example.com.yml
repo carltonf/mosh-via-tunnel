@@ -1,0 +1,12 @@
+---
+rhost: myhost.example.com
+nc_mosh_port: 12345
+proxies:
+- link: "socks5://127.0.0.1:1080"
+- link: "ss://encryption:password@myhost.example.com:1080"
+- link: "relay://127.0.0.1:1081"
+  last: true
+
+## Dynamic alloated, DO NOT mark the end of YAML file
+# local_port: $local_relay_port
+# mosh_server_port: $mosh_port

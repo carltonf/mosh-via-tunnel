@@ -1,0 +1,50 @@
+#!/bin/bash
+#
+# A simple netcat web server that _only_ listen at localhost.
+# Upon receive simple text 'mosh-server', this daemon starts mosh-server and
+# send the output to the client.
+#
+# To use this service, the client needs to connect to the server through other
+# secure channels first, e.g. Shadowsocks proxy and etc (of course ssh, but
+# then why use this daemon).
+
+FIFO=${FIFO:-/tmp/nc-mosh-server-daemon-$$}
+mkfifo "$FIFO"
+if [[ $? != 0 ]]; then
+    echo "ERROR: can't create $FIFO_PATH"
+    exit 1
+fi
+
+# Read from input from client to nc server, if the input is simple text
+# 'most-server', execute mosh-server.
+# All stdout will be sent back to client, so info for server side only should
+# be redirected to stderr
+mosh_server_nc(){
+    read cmd
+    if [[ $cmd = 'mosh-server' ]]; then
+        echo "[main] starting mosh-server..." 1>&2
+        mosh-server
+    else
+        # send error both to server and client screen
+        echo "ERROR: unrecognized $cmd" | tee >(cat >&2)
+    fi
+}
+
+trap_ctrlc (){
+    echo "Ctrl-C caught...performing clean up"
+    rm -vf "$FIFO"
+    echo "Exit. Bye."
+ 
+    exit 0
+}
+ 
+# initialise trap to call trap_ctrlc function
+# when signal 2 (SIGINT) is received
+trap "trap_ctrlc" 2
+
+while true; do
+    # Only listen to the local port
+    cat "$FIFO" | mosh_server_nc | nc -l 127.0.0.1 6000 > "$FIFO"
+    # slow things down a bit
+    sleep 3
+done
